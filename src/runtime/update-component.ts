@@ -1,5 +1,5 @@
 import { BUILD, NAMESPACE } from '@app-data';
-import { consoleError, doc, getHostRef, nextTick, plt, win, writeTask } from '@platform';
+import { consoleError, doc, getHostRef, nextTick, plt, win } from '@platform';
 import { CMP_FLAGS, HOST_FLAGS } from '@utils';
 
 import type * as d from '../declarations';
@@ -28,8 +28,7 @@ export const scheduleUpdate = (hostRef: d.HostRef, isInitialLoad: boolean) => {
   // there is no ancestor component or the ancestor component
   // has already fired off its lifecycle update then
   // fire off the initial update
-  const dispatch = () => dispatchHooks(hostRef, isInitialLoad);
-  return BUILD.taskQueue ? writeTask(dispatch) : dispatch();
+  return dispatchHooks(hostRef, isInitialLoad);
 };
 
 const dispatchHooks = (hostRef: d.HostRef, isInitialLoad: boolean) => {
@@ -38,23 +37,33 @@ const dispatchHooks = (hostRef: d.HostRef, isInitialLoad: boolean) => {
   const instance = BUILD.lazyLoad ? hostRef.$lazyInstance$ : (elm as any);
 
   let promise: Promise<void>;
+  if (BUILD.taskQueue) {
+    promise = Promise.resolve();
+    /*
+    promise = new Promise((resolve) => {
+      writeTask(() => resolve());
+    });
+    */
+  }
   if (isInitialLoad) {
-    if (BUILD.lazyLoad && BUILD.hostListener) {
-      hostRef.$flags$ |= HOST_FLAGS.isListenReady;
-      if (hostRef.$queuedListeners$) {
-        hostRef.$queuedListeners$.map(([methodName, event]) => safeCall(instance, methodName, event));
-        hostRef.$queuedListeners$ = null;
-      }
-    }
     emitLifecycleEvent(elm, 'componentWillLoad');
-    if (BUILD.cmpWillLoad) {
-      promise = safeCall(instance, 'componentWillLoad');
-    }
+    promise = then(promise, () => {
+      if (BUILD.lazyLoad && BUILD.hostListener) {
+        hostRef.$flags$ |= HOST_FLAGS.isListenReady;
+        if (hostRef.$queuedListeners$) {
+          hostRef.$queuedListeners$.map(([methodName, event]) => safeCall(instance, methodName, event));
+          hostRef.$queuedListeners$ = null;
+        }
+      }
+      if (BUILD.cmpWillLoad) {
+        return safeCall(instance, 'componentWillLoad');
+      }
+    });
   } else {
     emitLifecycleEvent(elm, 'componentWillUpdate');
 
     if (BUILD.cmpWillUpdate) {
-      promise = safeCall(instance, 'componentWillUpdate');
+      promise = then(promise, () => safeCall(instance, 'componentWillUpdate'));
     }
   }
 
